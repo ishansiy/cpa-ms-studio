@@ -1,0 +1,75 @@
+# CPA Stack 对外入口（ModelScope Docker Studio）
+#
+# 公网只暴露 7860，三个上游全在容器回环：
+#   CLIProxyAPI  127.0.0.1:8317   推理网关
+#   Oh My CPA    127.0.0.1:8080   控制台（base path /omc）
+#
+# 请求头净化（ModelScope 国际版边缘会向容器注入/替换 Authorization，
+# 实测见 grok2api-ms 的 authstrip 教训；此处按 CPA v8 的真实语义处理）：
+#   - /v1*、/v1beta*（客户端 API）：删除 Authorization。CPA v8 的
+#     access provider 原生匹配 X-Api-Key / X-Goog-Api-Key / ?key= /
+#     ?auth_token=，因此客户端一律使用 X-Api-Key 或 ?key=（Bearer 经
+#     ms.fun 本就会被边缘改写，不可依赖）。
+#   - /v0/management*（管理 API）：删除 Authorization。CPA v8 管理中间件
+#     原生接受 X-Management-Key，管理调用一律使用该头。
+#   - /omc*（控制台）：删除 Authorization。OMC 使用会话 Cookie 登录，
+#     不接受请求头凭据；它自己持有 CPA 管理钥去连接网关。
+#
+# 响应头：OMC 自带 X-Frame-Options: SAMEORIGIN（强制生效）与
+# Report-Only 的 frame-ancestors 'self'，会让「魔塔平台创空间页」
+# 以跨域 iframe 嵌入时被浏览器拒绝而白屏。故删除 XFO 并下发一条
+# 强制的 frame-ancestors 白名单（仅允许魔塔自身域名内嵌）。
+
+:7860 {
+	encode gzip zstd
+
+	# 网关健康检查（无鉴权需求）
+	handle /healthz {
+		reverse_proxy 127.0.0.1:8317
+	}
+
+	# CPA 管理接口：管理调用携带 X-Management-Key
+	handle /v0/management* {
+		reverse_proxy 127.0.0.1:8317 {
+			header_up -Authorization
+		}
+	}
+
+	# CPA 插件资源（OMC 面板内的可信插件页面）
+	handle /v0/resource/plugins/* {
+		reverse_proxy 127.0.0.1:8317 {
+			header_up -Authorization
+		}
+	}
+
+	# 客户端模型 API：OpenAI 兼容与 Gemini 兼容
+	handle /v1* {
+		reverse_proxy 127.0.0.1:8317 {
+			header_up -Authorization
+		}
+	}
+
+	handle /v1beta* {
+		reverse_proxy 127.0.0.1:8317 {
+			header_up -Authorization
+		}
+	}
+
+	# Oh My CPA 控制台：允许被魔塔平台页 iframe 内嵌
+	handle /omc* {
+		reverse_proxy 127.0.0.1:8080 {
+			header_up -Authorization
+		}
+		header {
+			-X-Frame-Options
+			+Content-Security-Policy "frame-ancestors 'self' https://www.modelscope.ai https://modelscope.ai https://*.modelscope.ai https://*.ms.fun https://*.ms.show"
+		}
+	}
+
+	# 兜底：其余请求交给网关
+	handle {
+		reverse_proxy 127.0.0.1:8317 {
+			header_up -Authorization
+		}
+	}
+}
