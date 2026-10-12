@@ -1,0 +1,199 @@
+name: upstream-watch
+
+# 每日检测三个上游的最新稳定版，有变更则更新 Dockerfile 并重建镜像，
+# 构建成功后自动部署到魔塔创空间（cpa11111/cpa-stack）。
+#
+# 分级更新策略（见 check_upstream.py）：
+#   - CPA (CLIProxyAPI)：自动追 latest（高频、v8 向后兼容、核心价值）
+#   - OMC (Oh My CPA)：自动追 minor/patch，不跨 major
+#   - CodexComp：不自动更新（C-ABI 插件，手动管理）
+#
+# 全自动部署 + 自动回滚安全网：
+#   - 每个镜像额外打一个稳定的 <YYYYmmdd-HHMMSS> tag，便于回滚定位
+#   - 部署后跑冒烟测试（healthz + 管理接口）；失败则把 latest 回退到
+#     上一个已知良好的 tag 并重新部署，避免一次坏更新挂掉生产推理链路
+#
+# 需要的 Secrets：
+#   MODELSCOPE_TOKEN —— 能部署 cpa11111/cpa-stack 的魔塔 SDK token
+#   CPA_MGMT_KEY     —— CPA 管理密钥（冒烟测试用）
+# （构建/推 ghcr 用内置 GITHUB_TOKEN，无需额外 secret）
+
+on:
+  schedule:
+    # 每天 UTC 22:00 = 北京时间 06:00（低峰期）
+    - cron: "0 22 * * *"
+  workflow_dispatch: # 允许手动触发测试
+
+permissions:
+  contents: write   # 提交 Dockerfile 版本变更
+  packages: write   # 推 ghcr
+
+concurrency:
+  group: upstream-watch
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/ishansiy/cpa-ms-stack
+  STUDIO_OWNER: cpa11111
+  STUDIO_NAME: cpa-stack
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check upstream versions
+        id: check
+        run: |
+          set +e
+          python3 check_upstream.py
+          code=$?
+          echo "exit_code=$code"
+          if [ "$code" -eq 0 ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$code" -eq 10 ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::check_upstream.py failed with code $code"
+            exit 1
+          fi
+
+      - name: Compute stable tag
+        if: steps.check.outputs.changed == 'true'
+        id: tag
+        run: echo "stable=$(date -u +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name "upstream-watch[bot]"
+          git config user.email "upstream-watch[bot]@users.noreply.github.com"
+          git add Dockerfile
+          git commit -m "chore(deps): auto-bump upstream versions [skip ci]" || echo "nothing to commit"
+          git push
+
+      - name: Set up Buildx
+        if: steps.check.outputs.changed == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: steps.check.outputs.changed == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        if: steps.check.outputs.changed == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.tag.outputs.stable }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy to ModelScope studio
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          python3 -m pip install --quiet "modelscope>=1.39"
+          python3 - <<'PYEOF'
+          import os, time, sys
+          from modelscope import HubApi
+          token = os.environ["MODELSCOPE_TOKEN"]
+          api = HubApi(endpoint="https://www.modelscope.ai")
+          api.login(token)
+          owner, name = os.environ["STUDIO_OWNER"], os.environ["STUDIO_NAME"]
+          r = api.openapi.deploy_studio(owner, name)
+          print("deploy ->", r.get("status"))
+          for _ in range(30):
+              time.sleep(20)
+              s = api.openapi.get_studio(owner, name)
+              st, rt = s.get("status"), (s.get("runtime") or {}).get("status")
+              err = (s.get("runtime") or {}).get("error_message")
+              print(f"  status={st} runtime={rt}" + (f" err={err}" if err else ""))
+              if st in ("Running", "DeployFailed", "Stopped"):
+                  sys.exit(0 if st == "Running" else 1)
+          print("timeout waiting for deploy")
+          sys.exit(1)
+          PYEOF
+        env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          STUDIO_OWNER: ${{ env.STUDIO_OWNER }}
+          STUDIO_NAME: ${{ env.STUDIO_NAME }}
+
+      - name: Smoke test
+        if: steps.check.outputs.changed == 'true'
+        id: smoke
+        run: |
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
+          echo "waiting for gateway to settle..."
+          sleep 25
+          code=$(curl -s --max-time 20 -A "$UA" -o /tmp/h.txt -w '%{http_code}' https://cpa.007666.xyz/healthz)
+          echo "healthz: $code"
+          [ "$code" = "200" ] || exit 1
+          code=$(curl -s --max-time 20 -A "$UA" -o /tmp/m.txt -w '%{http_code}' \
+            -H "X-Management-Key: $MGMT_KEY" https://cpa.007666.xyz/v0/management/api-keys)
+          echo "management api-keys: $code"
+          [ "$code" = "200" ] || exit 1
+          echo "smoke OK"
+        env:
+          MGMT_KEY: ${{ secrets.CPA_MGMT_KEY }}
+
+      - name: Rollback to previous good tag on smoke failure
+        if: steps.check.outputs.changed == 'true' && steps.smoke.outcome == 'failure'
+        run: |
+          echo "::warning::smoke failed, rolling back to previous known-good image"
+          # 找上一个稳定 tag（排除本次刚打的）
+          python3 -m pip install --quiet requests
+          prev=$(python3 - <<'PYEOF'
+          import os, requests
+          tok = os.environ["GH_PAT"]
+          h = {"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"}
+          r = requests.get("https://api.github.com/user/packages?package_type=container", headers=h, timeout=30)
+          cur = os.environ["CUR_TAG"]
+          tags = []
+          for p in r.json():
+              if p.get("name") == "cpa-ms-stack":
+                  vr = requests.get(p["url"]+"/versions?per_page=30", headers=h, timeout=30)
+                  for v in vr.json():
+                      t = [m["name"] for m in v.get("metadata",{}).get("container",{}).get("tags",[])]
+                      for x in t:
+                          if x != "latest" and x != cur and x[0].isdigit():
+                              tags.append(x)
+          tags.sort(reverse=True)
+          print(tags[0] if tags else "")
+          PYEOF
+          )
+          if [ -z "$prev" ]; then
+            echo "::error::no previous good tag found, cannot rollback"
+            exit 1
+          fi
+          echo "rolling back to tag: $prev"
+          # 把 latest 指向回退 tag（重新打 latest）
+          echo "$GH_PAT" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:$prev"
+          python3 -m pip install --quiet "modelscope>=1.39"
+          MODELSCOPE_TOKEN="${{ secrets.MODELSCOPE_TOKEN }}" python3 - <<'PYEOF'
+          import os, time, sys
+          from modelscope import HubApi
+          api = HubApi(endpoint="https://www.modelscope.ai"); api.login(os.environ["MODELSCOPE_TOKEN"])
+          api.openapi.deploy_studio(os.environ["STUDIO_OWNER"], os.environ["STUDIO_NAME"])
+          for _ in range(30):
+              time.sleep(20)
+              s = api.openapi.get_studio(os.environ["STUDIO_OWNER"], os.environ["STUDIO_NAME"])
+              if s.get("status") in ("Running","DeployFailed","Stopped"):
+                  print("rollback deploy:", s.get("status")); sys.exit(0 if s.get("status")=="Running" else 1)
+          sys.exit(1)
+          PYEOF
+        env:
+          GH_PAT: ${{ secrets.GITHUB_TOKEN }}
+          CUR_TAG: ${{ steps.tag.outputs.stable }}
+          IMAGE: ${{ env.IMAGE }}
+          STUDIO_OWNER: ${{ env.STUDIO_OWNER }}
+          STUDIO_NAME: ${{ env.STUDIO_NAME }}
