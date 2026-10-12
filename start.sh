@@ -28,7 +28,7 @@ OMC_DATA_DIR="${OMC_RUNTIME_DIR}/data"
 OMC_SNAPSHOT="${DATA_ROOT}/omc/data.snapshot.sqlite"
 
 CPA_HEALTH="http://127.0.0.1:8317/healthz"
-OMC_HEALTH="http://127.0.0.1:18901${OMC_BASE_PATH:-/omc}/api/healthz"
+OMC_HEALTH="http://127.0.0.1:18901${OMC_BASE_PATH:-/}api/healthz"
 CADDY_HEALTH="http://127.0.0.1:7860/healthz"
 
 require_secret() {
@@ -204,14 +204,16 @@ wait_for_service "CLIProxyAPI" "${CPA_HEALTH}" "${cpa_pid}" 300
 # ---------- 启动 Oh My CPA ----------
 # 8080 在 ModelScope 创空间里被平台自带的 dashboard 占用（无论绑
 # 0.0.0.0 还是 127.0.0.1 都报 "address already in use"），因此 OMC
-# 改用 18901；公网访问由 Caddy 在 7860 把 /omc 转发过来。
+# 改用 18901；公网访问由 Caddy 在 7860 转发。
 export OMCPA_LISTEN_ADDR="127.0.0.1:18901"
 export OMCPA_CPA_BASE_URL="http://127.0.0.1:8317"
 export OMCPA_CPA_MANAGEMENT_KEY="${CPA_MANAGEMENT_KEY}"
 export OMCPA_MASTER_KEY
 export OMCPA_DATA_DIR="${OMC_DATA_DIR}"
-export OMCPA_BASE_PATH="${OMC_BASE_PATH:-/omc}"
-export OMCPA_PUBLIC_URL="${OMCPA_PUBLIC_URL:-https://cpa11111-cpa-stack.ms.fun}"
+# 面板挂在根路径，访问 https://<domain>/ 即是控制台，无需 /omc 后缀。
+# Caddy 已把 /v1 /v0 /healthz 等 API 路径分流给 CPA，其余全部给 OMC。
+export OMCPA_BASE_PATH="${OMCPA_BASE_PATH:-/}"
+export OMCPA_PUBLIC_URL="${OMCPA_PUBLIC_URL:-https://cpa.007666.xyz}"
 export OMCPA_USAGE_INGEST_MODE="auto"
 export TZ="${TZ:-Asia/Shanghai}"
 

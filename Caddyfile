@@ -2,7 +2,13 @@
 #
 # 公网只暴露 7860，三个上游全在容器回环：
 #   CLIProxyAPI  127.0.0.1:8317   推理网关
-#   Oh My CPA    127.0.0.1:18901  控制台（base path /omc）
+#   Oh My CPA    127.0.0.1:18901  控制台（base path /，即根路径）
+#
+# 路由规则：
+#   /healthz, /v0/management*, /v0/resource/plugins/*, /v1*, /v1beta*
+#       -> CPA 网关（API 与管理接口）
+#   其余所有路径（含 / 与 SPA history 路由如 /settings、/usage）
+#       -> Oh My CPA 控制台
 #
 # 请求头净化（ModelScope 国际版边缘会向容器注入/替换 Authorization，
 # 实测见 grok2api-ms 的 authstrip 教训；此处按 CPA v8 的真实语义处理）：
@@ -12,7 +18,7 @@
 #     ms.fun 本就会被边缘改写，不可依赖）。
 #   - /v0/management*（管理 API）：删除 Authorization。CPA v8 管理中间件
 #     原生接受 X-Management-Key，管理调用一律使用该头。
-#   - /omc*（控制台）：删除 Authorization。OMC 使用会话 Cookie 登录，
+#   - 控制台路径：删除 Authorization。OMC 使用会话 Cookie 登录，
 #     不接受请求头凭据；它自己持有 CPA 管理钥去连接网关。
 #
 # 响应头：OMC 自带 X-Frame-Options: SAMEORIGIN（强制生效）与
@@ -21,6 +27,7 @@
 # 强制的 frame-ancestors 白名单（仅允许魔塔自身域名内嵌）。
 
 :7860 {
+
 	encode gzip zstd
 
 	# 网关健康检查（无鉴权需求）
@@ -55,21 +62,14 @@
 		}
 	}
 
-	# Oh My CPA 控制台：允许被魔塔平台页 iframe 内嵌
-	handle /omc* {
+	# Oh My CPA 控制台：根路径及所有 SPA 路由
+	handle {
 		reverse_proxy 127.0.0.1:18901 {
 			header_up -Authorization
 		}
 		header {
 			-X-Frame-Options
 			+Content-Security-Policy "frame-ancestors 'self' https://www.modelscope.ai https://modelscope.ai https://*.modelscope.ai https://*.ms.fun https://*.ms.show"
-		}
-	}
-
-	# 兜底：其余请求交给网关
-	handle {
-		reverse_proxy 127.0.0.1:8317 {
-			header_up -Authorization
 		}
 	}
 }
