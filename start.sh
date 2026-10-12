@@ -65,28 +65,47 @@ assemble_b64() {
   printf '%s' "${acc}"
 }
 
-# 四个必需 Secret：管理钥一把（CPA 管理接口 + OMC 登录），
-# 配置与凭据各一份 base64（可分块），OMC 主钥用于静态加密。
+# 两种运行模式（按 PGSTORE_DSN 是否存在自动判定）：
+#   PGStore 模式：配置与 OAuth 凭据的唯一事实源是在线 PostgreSQL。
+#     Studio Secret 只需 CPA_MANAGEMENT_KEY + OMCPA_MASTER_KEY + PGSTORE_DSN。
+#   本地模式：配置与凭据经 base64 Secret 灌入持久盘（可分块）。
+PGSTORE_MODE=0
+if [[ -n "${PGSTORE_DSN:-}" ]]; then
+  PGSTORE_MODE=1
+  # 本地 spool（库的镜像工作区）放持久盘，跨重启保留
+  export PGSTORE_LOCAL_PATH="${PGSTORE_LOCAL_PATH:-${DATA_ROOT}}"
+fi
+
 require_secret CPA_MANAGEMENT_KEY
 require_secret OMCPA_MASTER_KEY
 
-CPA_CONFIG_B64="$(assemble_b64 CPA_CONFIG_B64)"
-CPA_AUTHS_B64="$(assemble_b64 CPA_AUTHS_B64)"
+CPA_CONFIG_B64=""
+CPA_AUTHS_B64=""
+if [[ "${PGSTORE_MODE}" == "0" ]]; then
+  CPA_CONFIG_B64="$(assemble_b64 CPA_CONFIG_B64)"
+  CPA_AUTHS_B64="$(assemble_b64 CPA_AUTHS_B64)"
+fi
 
 mkdir -p "${CPA_DATA_DIR}" "${CPA_AUTH_DIR}" "${CPA_PLUGINS}/linux/amd64" \
          "${OMC_RUNTIME_DIR}" "${OMC_DATA_DIR}" "${DATA_ROOT}/omc"
 
 # ---------- 一次性初始化（新数据根只做一次，之后尊重运行期改动） ----------
-if [[ ! -s "${CPA_CONFIG}" ]]; then
-  printf '%s' "${CPA_CONFIG_B64}" | base64 -d >"${CPA_CONFIG}"
-  chmod 0600 "${CPA_CONFIG}"
-  printf 'Initialized CPA configuration from Studio Secret.\n'
-fi
+if [[ "${PGSTORE_MODE}" == "1" ]]; then
+  # CPA 启动时从库引导 config.yaml、并 RemoveAll 后按库重建 auth 目录，
+  # 此处只做提示；数据由迁移脚本预灌在库里。
+  printf 'PGStore mode: online PostgreSQL is the source of truth (spool: %s/pgstore).\n' "${PGSTORE_LOCAL_PATH}"
+else
+  if [[ ! -s "${CPA_CONFIG}" ]]; then
+    printf '%s' "${CPA_CONFIG_B64}" | base64 -d >"${CPA_CONFIG}"
+    chmod 0600 "${CPA_CONFIG}"
+    printf 'Initialized CPA configuration from Studio Secret.\n'
+  fi
 
-if [[ -z "$(ls -A "${CPA_AUTH_DIR}" 2>/dev/null)" ]]; then
-  printf '%s' "${CPA_AUTHS_B64}" | base64 -d | tar xzf - -C "${CPA_AUTH_DIR}"
-  chmod 0600 "${CPA_AUTH_DIR}"/*.json 2>/dev/null || true
-  printf 'Unpacked %d OAuth credential files.\n' "$(ls -1 "${CPA_AUTH_DIR}"/*.json 2>/dev/null | wc -l)"
+  if [[ -z "$(ls -A "${CPA_AUTH_DIR}" 2>/dev/null)" ]]; then
+    printf '%s' "${CPA_AUTHS_B64}" | base64 -d | tar xzf - -C "${CPA_AUTH_DIR}"
+    chmod 0600 "${CPA_AUTH_DIR}"/*.json 2>/dev/null || true
+    printf 'Unpacked %d OAuth credential files.\n' "$(ls -1 "${CPA_AUTH_DIR}"/*.json 2>/dev/null | wc -l)"
+  fi
 fi
 
 PLUGIN_SO="${CPA_PLUGINS}/linux/amd64/codexcomp-v0.1.7.so"
