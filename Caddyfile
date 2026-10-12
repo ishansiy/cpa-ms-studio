@@ -2,7 +2,7 @@
 #
 # 公网只暴露 7860，三个上游全在容器回环：
 #   CLIProxyAPI  127.0.0.1:8317   推理网关
-#   Oh My CPA    127.0.0.1:8080   控制台（base path /omc）
+#   Oh My CPA    127.0.0.1:18901  控制台（base path /omc）
 #
 # 请求头净化（ModelScope 国际版边缘会向容器注入/替换 Authorization，
 # 实测见 grok2api-ms 的 authstrip 教训；此处按 CPA v8 的真实语义处理）：
@@ -57,7 +57,7 @@
 
 	# Oh My CPA 控制台：允许被魔塔平台页 iframe 内嵌
 	handle /omc* {
-		reverse_proxy 127.0.0.1:8080 {
+		reverse_proxy 127.0.0.1:18901 {
 			header_up -Authorization
 		}
 		header {

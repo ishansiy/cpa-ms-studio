@@ -4,7 +4,7 @@
 #
 # 单容器三进程，全部官方预编译二进制（不编译任何东西）：
 #   - CLIProxyAPI v8.0.24     推理网关，127.0.0.1:8317
-#   - Oh My CPA   v0.2.6      用量/控制台，127.0.0.1:8080，挂 /omc
+#   - Oh My CPA   v0.2.6      用量/控制台，127.0.0.1:18901，挂 /omc
 #   - CodexComp    v0.1.7     CPA 插件（修 gpt-5.5 系 reasoning truncation）
 #   - Caddy                  对外唯一入口 7860，负责分流与请求头净化
 #
@@ -96,7 +96,7 @@ RUN chmod 0755 /app/cli-proxy-api /app/oh-my-cpa /app/start.sh \
 ENV TZ=Asia/Shanghai
 ENV DATA_ROOT=/mnt/workspace/cpa-stack
 ENV CPA_ADDR=127.0.0.1:8317
-ENV OMC_ADDR=127.0.0.1:8080
+# OMC 监听地址由 start.sh 设 OMCPA_LISTEN_ADDR（创空间 8080 被平台 dashboard 占用）
 ENV OMC_BASE_PATH=/omc
 ENV PORT=7860
 

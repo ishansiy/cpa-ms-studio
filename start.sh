@@ -3,7 +3,7 @@
 #
 # 单容器三进程 + 一个入口：
 #   CLIProxyAPI  127.0.0.1:8317   推理网关（凭据与配置来自 Studio Secret）
-#   Oh My CPA    127.0.0.1:8080   控制台，挂 /omc
+#   Oh My CPA    127.0.0.1:18901  控制台，挂 /omc
 #   Caddy        0.0.0.0:7860     唯一公网入口，分流 + 请求头净化
 #
 # 持久化布局（/mnt/workspace/cpa-stack 在 Studio 持久盘，跨重启保留）：
@@ -28,7 +28,7 @@ OMC_DATA_DIR="${OMC_RUNTIME_DIR}/data"
 OMC_SNAPSHOT="${DATA_ROOT}/omc/data.snapshot.sqlite"
 
 CPA_HEALTH="http://127.0.0.1:8317/healthz"
-OMC_HEALTH="http://127.0.0.1:8080${OMC_BASE_PATH:-/omc}/api/healthz"
+OMC_HEALTH="http://127.0.0.1:18901${OMC_BASE_PATH:-/omc}/api/healthz"
 CADDY_HEALTH="http://127.0.0.1:7860/healthz"
 
 require_secret() {
@@ -183,10 +183,10 @@ unset MANAGEMENT_PASSWORD
 wait_for_service "CLIProxyAPI" "${CPA_HEALTH}" "${cpa_pid}" 300
 
 # ---------- 启动 Oh My CPA ----------
-# OMC 默认监听 :8080（所有网卡），与创空间平台自带的 dashboard 冲突
-# （实测报 "listen tcp :8080: bind: address already in use"）。必须显式
-# 绑定回环地址；公网访问统一由 Caddy 在 7860 转发到 /omc。
-export OMCPA_LISTEN_ADDR="127.0.0.1:8080"
+# 8080 在 ModelScope 创空间里被平台自带的 dashboard 占用（无论绑
+# 0.0.0.0 还是 127.0.0.1 都报 "address already in use"），因此 OMC
+# 改用 18901；公网访问由 Caddy 在 7860 把 /omc 转发过来。
+export OMCPA_LISTEN_ADDR="127.0.0.1:18901"
 export OMCPA_CPA_BASE_URL="http://127.0.0.1:8317"
 export OMCPA_CPA_MANAGEMENT_KEY="${CPA_MANAGEMENT_KEY}"
 export OMCPA_MASTER_KEY
