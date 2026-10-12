@@ -42,9 +42,9 @@ RUN set -eux; \
     base="https://github.com/router-for-me/CLIProxyAPI/releases/download/${CPA_VERSION}"; \
     curl -fsSL --retry 5 --retry-delay 2 "${base}/${asset}" -o "${asset}"; \
     echo "${CPA_SHA256}  ${asset}" | sha256sum -c -; \
-    mkdir -p /out/cpa; \
-    tar -xzf "${asset}" -C /out/cpa; \
-    binary="$(find /out/cpa -type f -name cli-proxy-api -print -quit)"; \
+    mkdir -p /out/cpa /tmp/cpa-extract; \
+    tar -xzf "${asset}" -C /tmp/cpa-extract; \
+    binary="$(find /tmp/cpa-extract -type f -name cli-proxy-api -print -quit)"; \
     test -n "${binary}"; \
     install -m 0755 "${binary}" /out/cpa/cli-proxy-api
 
@@ -55,9 +55,9 @@ RUN set -eux; \
     base="https://github.com/WizisCool/oh-my-cpa/releases/download/${OMC_VERSION}"; \
     curl -fsSL --retry 5 --retry-delay 2 "${base}/${asset}" -o "${asset}"; \
     echo "${OMC_SHA256}  ${asset}" | sha256sum -c -; \
-    mkdir -p /out/omc; \
-    tar -xzf "${asset}" -C /out/omc; \
-    binary="$(find /out/omc -type f -name oh-my-cpa -print -quit)"; \
+    mkdir -p /out/omc /tmp/omc-extract; \
+    tar -xzf "${asset}" -C /tmp/omc-extract; \
+    binary="$(find /tmp/omc-extract -type f -name oh-my-cpa -print -quit)"; \
     test -n "${binary}"; \
     install -m 0755 "${binary}" /out/omc/oh-my-cpa
 
