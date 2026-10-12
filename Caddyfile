@@ -21,16 +21,23 @@
 #   - 控制台路径：删除 Authorization。OMC 使用会话 Cookie 登录，
 #     不接受请求头凭据；它自己持有 CPA 管理钥去连接网关。
 #
-# 控制台的 same-origin 校验（OMC 防 CSRF，internal/api/handler.go）：
-#   浏览器 POST 带 Origin: https://cpa.007666.xyz 时，OMC 要求
-#   request.Host == cpa.007666.xyz 且 scheme 为 https。本部署的链路
-#   浏览器→CF→gateway Worker→ms.fun 边缘→容器，TLS 在 CF/网关层终止，
-#   且边缘到容器这一段会改写 Host。因此：
-#   - 经 gateway 接入时（X-Forwarded-Host 携带浏览器原始主机名，由
-#     Worker 设置），重写发给 OMC 的 Host 为该主机名，让校验「真同源」；
-#   - 强制 X-Forwarded-Proto: https（Caddy 到 OMC 是明文 HTTP，
-#     否则 OMC 推导出的 scheme 是 http，与浏览器 https 的 Origin 不符）；
-#   - 直连 ms.fun（平台 iframe 通道）时无该头，保持 Host 原样。
+# 控制台的 same-origin 校验（OMC 防 CSRF，internal/api/handler.go：
+# 比较浏览器 Origin 的 host 与 request.Host、scheme 与
+# TLS/X-Forwarded-Proto 推导值）的适配：
+#   本链路 浏览器→CF→gateway Worker→ms.fun 边缘→容器 Caddy→OMC 中，
+#   TLS 在 CF/网关层终止（Caddy→OMC 是明文 HTTP），且 ms.fun 边缘会把
+#   Host 改写成容器内部地址（实测 host=....pai-eas.aliyuncs.com）、
+#   并覆写 X-Forwarded-Host 为创空间自身主机名——浏览器原始入口域名
+#   只存在于 Origin/Referer 头中（两者均原样透过边缘）。
+#   因此：
+#   - 对「我们自己的入口域名」的 Origin 做精确白名单匹配，并把发给
+#     OMC 的 Host 重写为该入口域名，使校验按「真同源」通过；
+#   - 强制 X-Forwarded-Proto: https（否则 OMC 推导的 scheme 是 http，
+#     与浏览器 https 的 Origin 不符）；
+#   - 不做「无条件跟随 Origin」的重写：那会把校验变成恒真、中和防
+#     CSRF 能力。跨站攻击者的 Origin 不在白名单 → Host 保持边缘改写
+#     的内部地址 → 校验依然拒绝。
+#   - 新增入口域名时，在此增加对应的 @origin_* 匹配与 handle 块。
 #
 # 响应头：OMC 自带 X-Frame-Options: SAMEORIGIN（强制生效）与
 # Report-Only 的 frame-ancestors 'self'，会让「魔塔平台创空间页」
@@ -40,13 +47,6 @@
 :7860 {
 
 	encode gzip zstd
-
-	# 临时诊断：全量访问日志（含请求头），用于确认边缘转发的 Host /
-	# X-Forwarded-* 真实值；定位完成后移除。
-	log {
-		output stdout
-		format json
-	}
 
 	# 网关健康检查（无鉴权需求）
 	handle /healthz {
@@ -81,15 +81,17 @@
 	}
 
 	# Oh My CPA 控制台：根路径及所有 SPA 路由
+	#
+	# 白名单：仅当 Origin 精确等于我们自己的入口域名时重写 Host。
 	route {
-		# 经 modelscope-gateway 接入：Worker 把浏览器原始主机名放入
-		# X-Forwarded-Host，用它重写 Host 使 same-origin 校验通过。
-		@via_gateway header X-Forwarded-Host *
-		handle @via_gateway {
+		@origin_cpa header Origin https://cpa.007666.xyz
+		@origin_msf header Origin https://cpa11111-cpa-stack.ms.fun
+
+		handle @origin_cpa {
 			reverse_proxy 127.0.0.1:18901 {
 				header_up -Authorization
 				header_up X-Forwarded-Proto https
-				header_up Host {http.request.header.X-Forwarded-Host}
+				header_up Host cpa.007666.xyz
 			}
 			header {
 				-X-Frame-Options
@@ -97,7 +99,21 @@
 			}
 		}
 
-		# 直连 ms.fun（平台页 iframe 通道）：Host 原样保留
+		handle @origin_msf {
+			reverse_proxy 127.0.0.1:18901 {
+				header_up -Authorization
+				header_up X-Forwarded-Proto https
+				header_up Host cpa11111-cpa-stack.ms.fun
+			}
+			header {
+				-X-Frame-Options
+				+Content-Security-Policy "frame-ancestors 'self' https://www.modelscope.ai https://modelscope.ai https://*.modelscope.ai https://*.ms.fun https://*.ms.show"
+			}
+		}
+
+		# 其余情况（无 Origin 的 API 客户端 / 非白名单 Origin）：
+		# 无 Origin 时 OMC 本就放行（非浏览器客户端）；非白名单 Origin
+		# 保持 Host 原样，同源校验按设计拒绝。
 		handle {
 			reverse_proxy 127.0.0.1:18901 {
 				header_up -Authorization
