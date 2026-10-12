@@ -40,12 +40,38 @@ require_secret() {
   fi
 }
 
+# ModelScope Studio Secret 单值上限 4096 字符（实测报错：
+# "value exceeds maximum length of 4096 characters"），因此大 payload
+# 必须拆成多个分块 Secret。本函数先取单块 BASE 变量，否则按
+# BASE_PART1..PARTN 顺序拼接，两种形态都兼容。
+assemble_b64() {
+  local base="$1" acc="" idx=1 part
+  if [[ -n "${!base:-}" ]]; then
+    printf '%s' "${!base}"
+    return 0
+  fi
+  while true; do
+    part="${base}_PART${idx}"
+    if [[ -z "${!part:-}" ]]; then
+      break
+    fi
+    acc+="${!part}"
+    idx=$((idx + 1))
+  done
+  if [[ -z "${acc}" ]]; then
+    printf 'neither %s nor %s_PART<N> is configured.\n' "${base}" "${base}" >&2
+    exit 1
+  fi
+  printf '%s' "${acc}"
+}
+
 # 四个必需 Secret：管理钥一把（CPA 管理接口 + OMC 登录），
-# 配置与凭据各一份 base64，OMC 主钥用于静态加密。
+# 配置与凭据各一份 base64（可分块），OMC 主钥用于静态加密。
 require_secret CPA_MANAGEMENT_KEY
-require_secret CPA_CONFIG_B64
-require_secret CPA_AUTHS_B64
 require_secret OMCPA_MASTER_KEY
+
+CPA_CONFIG_B64="$(assemble_b64 CPA_CONFIG_B64)"
+CPA_AUTHS_B64="$(assemble_b64 CPA_AUTHS_B64)"
 
 mkdir -p "${CPA_DATA_DIR}" "${CPA_AUTH_DIR}" "${CPA_PLUGINS}/linux/amd64" \
          "${OMC_RUNTIME_DIR}" "${OMC_DATA_DIR}" "${DATA_ROOT}/omc"
@@ -179,5 +205,6 @@ snapshot_loop &
 snapshot_pid=$!
 
 unset CPA_CONFIG_B64 CPA_AUTHS_B64
+unset "${!CPA_CONFIG_B64@}" "${!CPA_AUTHS_B64@}" 2>/dev/null || true
 printf 'CLIProxyAPI, Oh My CPA and the public gateway are ready.\n'
 wait -n "${cpa_pid}" "${omc_pid}" "${caddy_pid}"
