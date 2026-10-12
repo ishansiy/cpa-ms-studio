@@ -21,6 +21,17 @@
 #   - 控制台路径：删除 Authorization。OMC 使用会话 Cookie 登录，
 #     不接受请求头凭据；它自己持有 CPA 管理钥去连接网关。
 #
+# 控制台的 same-origin 校验（OMC 防 CSRF，internal/api/handler.go）：
+#   浏览器 POST 带 Origin: https://cpa.007666.xyz 时，OMC 要求
+#   request.Host == cpa.007666.xyz 且 scheme 为 https。本部署的链路
+#   浏览器→CF→gateway Worker→ms.fun 边缘→容器，TLS 在 CF/网关层终止，
+#   且边缘到容器这一段会改写 Host。因此：
+#   - 经 gateway 接入时（X-Forwarded-Host 携带浏览器原始主机名，由
+#     Worker 设置），重写发给 OMC 的 Host 为该主机名，让校验「真同源」；
+#   - 强制 X-Forwarded-Proto: https（Caddy 到 OMC 是明文 HTTP，
+#     否则 OMC 推导出的 scheme 是 http，与浏览器 https 的 Origin 不符）；
+#   - 直连 ms.fun（平台 iframe 通道）时无该头，保持 Host 原样。
+#
 # 响应头：OMC 自带 X-Frame-Options: SAMEORIGIN（强制生效）与
 # Report-Only 的 frame-ancestors 'self'，会让「魔塔平台创空间页」
 # 以跨域 iframe 嵌入时被浏览器拒绝而白屏。故删除 XFO 并下发一条
@@ -29,6 +40,13 @@
 :7860 {
 
 	encode gzip zstd
+
+	# 临时诊断：全量访问日志（含请求头），用于确认边缘转发的 Host /
+	# X-Forwarded-* 真实值；定位完成后移除。
+	log {
+		output stdout
+		format json
+	}
 
 	# 网关健康检查（无鉴权需求）
 	handle /healthz {
@@ -63,13 +81,32 @@
 	}
 
 	# Oh My CPA 控制台：根路径及所有 SPA 路由
-	handle {
-		reverse_proxy 127.0.0.1:18901 {
-			header_up -Authorization
+	route {
+		# 经 modelscope-gateway 接入：Worker 把浏览器原始主机名放入
+		# X-Forwarded-Host，用它重写 Host 使 same-origin 校验通过。
+		@via_gateway header X-Forwarded-Host *
+		handle @via_gateway {
+			reverse_proxy 127.0.0.1:18901 {
+				header_up -Authorization
+				header_up X-Forwarded-Proto https
+				header_up Host {http.request.header.X-Forwarded-Host}
+			}
+			header {
+				-X-Frame-Options
+				+Content-Security-Policy "frame-ancestors 'self' https://www.modelscope.ai https://modelscope.ai https://*.modelscope.ai https://*.ms.fun https://*.ms.show"
+			}
 		}
-		header {
-			-X-Frame-Options
-			+Content-Security-Policy "frame-ancestors 'self' https://www.modelscope.ai https://modelscope.ai https://*.modelscope.ai https://*.ms.fun https://*.ms.show"
+
+		# 直连 ms.fun（平台页 iframe 通道）：Host 原样保留
+		handle {
+			reverse_proxy 127.0.0.1:18901 {
+				header_up -Authorization
+				header_up X-Forwarded-Proto https
+			}
+			header {
+				-X-Frame-Options
+				+Content-Security-Policy "frame-ancestors 'self' https://www.modelscope.ai https://modelscope.ai https://*.modelscope.ai https://*.ms.fun https://*.ms.show"
+			}
 		}
 	}
 }
