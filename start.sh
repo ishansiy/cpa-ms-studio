@@ -183,6 +183,10 @@ unset MANAGEMENT_PASSWORD
 wait_for_service "CLIProxyAPI" "${CPA_HEALTH}" "${cpa_pid}" 300
 
 # ---------- 启动 Oh My CPA ----------
+# OMC 默认监听 :8080（所有网卡），与创空间平台自带的 dashboard 冲突
+# （实测报 "listen tcp :8080: bind: address already in use"）。必须显式
+# 绑定回环地址；公网访问统一由 Caddy 在 7860 转发到 /omc。
+export OMCPA_LISTEN_ADDR="127.0.0.1:8080"
 export OMCPA_CPA_BASE_URL="http://127.0.0.1:8317"
 export OMCPA_CPA_MANAGEMENT_KEY="${CPA_MANAGEMENT_KEY}"
 export OMCPA_MASTER_KEY
