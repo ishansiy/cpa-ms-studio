@@ -14,7 +14,7 @@
 # 官方来源与校验（构建时重新校验，此处仅为可读记录）：
 #   CPA   https://github.com/router-for-me/CLIProxyAPI/releases/tag/v8.0.32
 #         CLIProxyAPI_8.0.24_linux_amd64.tar.gz  sha256 094a3acffd97e152e2b7c61231404c2e702f2188c5a9acc58a87da0c5dd57db5
-#   OMC   https://github.com/WizisCool/oh-my-cpa/releases/tag/v0.3.1
+#   OMC   https://github.com/WizisCool/oh-my-cpa/releases/tag/v0.3.2
 #         oh-my-cpa_0.2.6_linux_amd64.tar.gz     sha256 96e4e30d286934de76c1b7a68e91d59550a442b5f900edf3262c14384a13c352
 #   插件  https://github.com/uf-hy/cpa-plugin-codexcomp/releases/tag/v0.1.7
 #         codexcomp_0.1.7_linux_amd64.zip        sha256 8191bc0e24f69fc2e58ad8aa3dc7d6d991402345cd39f1241debba7250cdb9ba
@@ -24,8 +24,8 @@ FROM debian:bookworm-slim AS downloader
 ARG TARGETARCH=amd64
 ARG CPA_VERSION=v8.0.32
 ARG CPA_SHA256=082a4a38d9470c070ac85ab2d9c4a2aa51f9a7ee19831c3b811e26fe5b7480a7
-ARG OMC_VERSION=v0.3.1
-ARG OMC_SHA256=ef391030f3f9111d14f66e0a803573200bdccc5bbc1d84e5ae2309487e6512a0
+ARG OMC_VERSION=v0.3.2
+ARG OMC_SHA256=285162e69d68931afac516fac8d7885f3c6192ddcdf621ba7b7f9a9760a46469
 ARG CODEXCOMP_VERSION=v0.1.7
 ARG CODEXCOMP_SHA256=8191bc0e24f69fc2e58ad8aa3dc7d6d991402345cd39f1241debba7250cdb9ba
 
