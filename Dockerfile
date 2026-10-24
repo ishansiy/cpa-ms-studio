@@ -12,7 +12,7 @@
 # 33 个 OAuth 凭据文件全部经 Studio Secret 注入，运行时由 start.sh 落盘。
 #
 # 官方来源与校验（构建时重新校验，此处仅为可读记录）：
-#   CPA   https://github.com/router-for-me/CLIProxyAPI/releases/tag/v8.0.40
+#   CPA   https://github.com/router-for-me/CLIProxyAPI/releases/tag/v8.0.41
 #         CLIProxyAPI_8.0.24_linux_amd64.tar.gz  sha256 094a3acffd97e152e2b7c61231404c2e702f2188c5a9acc58a87da0c5dd57db5
 #   OMC   https://github.com/WizisCool/oh-my-cpa/releases/tag/v0.3.9
 #         oh-my-cpa_0.2.6_linux_amd64.tar.gz     sha256 96e4e30d286934de76c1b7a68e91d59550a442b5f900edf3262c14384a13c352
@@ -22,8 +22,8 @@
 FROM debian:bookworm-slim AS downloader
 
 ARG TARGETARCH=amd64
-ARG CPA_VERSION=v8.0.40
-ARG CPA_SHA256=52f67ab57457072ec8c241344106fa2e96c164b716fa24341c76abe764e124ec
+ARG CPA_VERSION=v8.0.41
+ARG CPA_SHA256=99b9ca69753b2fa16290edecae4d19011299ecd7bfbad17a411b5470288d8b4a
 ARG OMC_VERSION=v0.3.9
 ARG OMC_SHA256=f04dd4e1778263d91a52d2f12d46fa47f1cab258feef5d7c17771554548776a9
 ARG CODEXCOMP_VERSION=v0.1.7
