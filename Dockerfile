@@ -12,9 +12,9 @@
 # 33 个 OAuth 凭据文件全部经 Studio Secret 注入，运行时由 start.sh 落盘。
 #
 # 官方来源与校验（构建时重新校验，此处仅为可读记录）：
-#   CPA   https://github.com/router-for-me/CLIProxyAPI/releases/tag/v8.0.47
+#   CPA   https://github.com/router-for-me/CLIProxyAPI/releases/tag/v8.0.48
 #         CLIProxyAPI_8.0.24_linux_amd64.tar.gz  sha256 094a3acffd97e152e2b7c61231404c2e702f2188c5a9acc58a87da0c5dd57db5
-#   OMC   https://github.com/WizisCool/oh-my-cpa/releases/tag/v0.3.17
+#   OMC   https://github.com/WizisCool/oh-my-cpa/releases/tag/v0.3.18
 #         oh-my-cpa_0.2.6_linux_amd64.tar.gz     sha256 96e4e30d286934de76c1b7a68e91d59550a442b5f900edf3262c14384a13c352
 #   插件  https://github.com/uf-hy/cpa-plugin-codexcomp/releases/tag/v0.1.7
 #         codexcomp_0.1.7_linux_amd64.zip        sha256 8191bc0e24f69fc2e58ad8aa3dc7d6d991402345cd39f1241debba7250cdb9ba
@@ -22,10 +22,10 @@
 FROM debian:bookworm-slim AS downloader
 
 ARG TARGETARCH=amd64
-ARG CPA_VERSION=v8.0.47
-ARG CPA_SHA256=2b5111dc6a0dfe0d607457787f794330d1b477bc9daa6337c26b0cd032a7827e
-ARG OMC_VERSION=v0.3.17
-ARG OMC_SHA256=36761c774458b63b7fa96d023f0d2acf236b47b8089e569571d63916af1b8f64
+ARG CPA_VERSION=v8.0.48
+ARG CPA_SHA256=095c46e7165842cf563f9665be86cf24a29ba94e57ab9bd67588fe5cc4c7125c
+ARG OMC_VERSION=v0.3.18
+ARG OMC_SHA256=a6f4953ecfc298e0132e4f0a81ec8b8ae88cf0114beb0d5e379e5f1cf2934341
 ARG CODEXCOMP_VERSION=v0.1.7
 ARG CODEXCOMP_SHA256=8191bc0e24f69fc2e58ad8aa3dc7d6d991402345cd39f1241debba7250cdb9ba
 
