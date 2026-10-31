@@ -23,6 +23,11 @@ on:
     # 每天 UTC 22:00 = 北京时间 06:00（低峰期）
     - cron: "0 22 * * *"
   workflow_dispatch: # 允许手动触发测试
+    inputs:
+      force:
+        description: "强制构建+部署（即使上游版本没变化）"
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # 提交 Dockerfile 版本变更
@@ -33,7 +38,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: ghcr.io/ishansiy/cpa-ms-stack
+  # 必须与创空间 Dockerfile 的 FROM 完全一致（ghcr.io/ishansiy/cpa-ms-studio），
+  # 否则每日检测通过、镜像推到另一个包名下，线上版本永不更新。
+  IMAGE: ghcr.io/ishansiy/cpa-ms-studio
   STUDIO_OWNER: cpa11111
   STUDIO_NAME: cpa-stack
 
@@ -45,12 +52,14 @@ jobs:
 
       - name: Check upstream versions
         id: check
+        env:
+          FORCE: ${{ github.event.inputs.force == 'true' }}
         run: |
           set +e
           python3 check_upstream.py
           code=$?
           echo "exit_code=$code"
-          if [ "$code" -eq 0 ]; then
+          if [ "$code" -eq 0 ] || [ "$FORCE" = "true" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           elif [ "$code" -eq 10 ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -159,7 +168,7 @@ jobs:
           cur = os.environ["CUR_TAG"]
           tags = []
           for p in r.json():
-              if p.get("name") == "cpa-ms-stack":
+              if p.get("name") == "cpa-ms-studio":
                   vr = requests.get(p["url"]+"/versions?per_page=30", headers=h, timeout=30)
                   for v in vr.json():
                       t = [m["name"] for m in v.get("metadata",{}).get("container",{}).get("tags",[])]
