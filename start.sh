@@ -188,6 +188,22 @@ diagnose_process_exit() {
   df -h /mnt/workspace /app /tmp 2>/dev/null >&2 || true
   echo "--- DIAG kernel oom ---" >&2
   (dmesg 2>/dev/null | grep -iE 'oom|killed process|out of memory' | tail -10) >&2 || echo "dmesg unavailable" >&2
+  echo "--- DIAG cpa stdout/stderr ---" >&2
+  if [[ -s /tmp/cpa-stdout.log ]]; then
+    tail -40 /tmp/cpa-stdout.log >&2
+  else
+    echo "(empty)" >&2
+  fi
+  echo "--- DIAG spool config 实况 ---" >&2
+  if [[ -s "${CPA_CONFIG}" ]]; then
+    echo "spool path: ${CPA_CONFIG} bytes=$(wc -c < "${CPA_CONFIG}")" >&2
+    echo "has_observability=$(grep -c '^observability:' "${CPA_CONFIG}" || true)" >&2
+    echo "has_debug_true=$(grep -cE '^\s+debug: true' "${CPA_CONFIG}" || true)" >&2
+    grep -E '^(port|auth-dir|usage-statistics-enabled):' "${CPA_CONFIG}" >&2 || true
+    sed -n '/^plugins:/,+2p' "${CPA_CONFIG}" >&2 || true
+  else
+    echo "spool config missing: ${CPA_CONFIG}" >&2
+  fi
 }
 
 wait_for_service() {
@@ -242,7 +258,7 @@ run_start_process() {
 
 launch_cpa() {
   export MANAGEMENT_PASSWORD="${CPA_MANAGEMENT_KEY}"
-  /app/cli-proxy-api --config "${CPA_CONFIG}" &
+  /app/cli-proxy-api --config "${CPA_CONFIG}" > /tmp/cpa-stdout.log 2>&1 &
   RUN_PID=$!
   unset MANAGEMENT_PASSWORD
 }
