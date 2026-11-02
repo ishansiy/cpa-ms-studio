@@ -1,6 +1,6 @@
 name: upstream-watch
 
-# 每日检测三个上游的最新稳定版，有变更则更新 Dockerfile 并重建镜像，
+# 手动触发：检测三个上游的最新稳定版，有变更则更新 Dockerfile 并重建镜像，
 # 构建成功后自动部署到魔塔创空间（cpa11111/cpa-stack）。
 #
 # 分级更新策略（见 check_upstream.py）：
@@ -19,10 +19,12 @@ name: upstream-watch
 # （构建/推 ghcr 用内置 GITHUB_TOKEN，无需额外 secret）
 
 on:
-  schedule:
-    # 每天 UTC 22:00 = 北京时间 06:00（低峰期）
-    - cron: "0 22 * * *"
-  workflow_dispatch: # 允许手动触发测试
+  # 仅手动触发：仓库 Actions 页 → 左侧 upstream-watch → Run workflow。
+  #
+  # 2026-11-02 起不再每日自动跟版：上游版本变化会与线上配置改动叠加，出事时
+  # 很难分清是版本问题还是配置问题（本次真实根因是配置开了 TLS 但没证书，与
+  # 版本无关，却因时间巧合被误判为跟版导致，白回滚了一轮）。改为人工确认后更新。
+  workflow_dispatch:
     inputs:
       force:
         description: "强制构建+部署（即使上游版本没变化）"
@@ -122,6 +124,21 @@ jobs:
           api = HubApi(endpoint="https://www.modelscope.ai")
           api.login(token)
           owner, name = os.environ["STUDIO_OWNER"], os.environ["STUDIO_NAME"]
+          image, tag = os.environ["IMAGE"], os.environ["NEW_TAG"]
+
+          # 创空间入口仓库只做一件事：指向 ghcr 上的具体 tag。
+          # 必须同步更新 FROM——否则 deploy 只是重启旧镜像，构建出的新版本永远上不了线。
+          import pathlib, tempfile
+          d = pathlib.Path(tempfile.mkdtemp())
+          (d / "Dockerfile").write_text(
+              "# ModelScope 创空间入口：引用 GitHub Actions 构建的镜像，容器内不做任何构建。\n"
+              "# 本文件由 upstream-watch workflow 写入，请勿手工改版本号。\n"
+              f"FROM {image}:{tag}\n\nEXPOSE 7860\n"
+          )
+          api.upload_folder(repo_id=f"{owner}/{name}", repo_type="studio",
+                            folder_path=str(d), commit_message=f"deploy {tag}")
+          print("studio Dockerfile ->", f"FROM {image}:{tag}")
+
           r = api.openapi.deploy_studio(owner, name)
           print("deploy ->", r.get("status"))
           for _ in range(30):
@@ -139,6 +156,8 @@ jobs:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
           STUDIO_OWNER: ${{ env.STUDIO_OWNER }}
           STUDIO_NAME: ${{ env.STUDIO_NAME }}
+          IMAGE: ${{ env.IMAGE }}
+          NEW_TAG: ${{ steps.tag.outputs.stable }}
 
       - name: Smoke test
         if: steps.check.outputs.changed == 'true' && steps.deploy.outcome == 'success'
@@ -194,11 +213,23 @@ jobs:
           echo "$GH_PAT" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:$prev"
           python3 -m pip install --quiet "modelscope>=1.39"
-          MODELSCOPE_TOKEN="${{ secrets.MODELSCOPE_TOKEN }}" python3 - <<'PYEOF'
-          import os, time, sys
+          PREV_TAG="$prev" MODELSCOPE_TOKEN="${{ secrets.MODELSCOPE_TOKEN }}" python3 - <<'PYEOF'
+          import os, time, sys, pathlib, tempfile
           from modelscope import HubApi
           api = HubApi(endpoint="https://www.modelscope.ai"); api.login(os.environ["MODELSCOPE_TOKEN"])
-          api.openapi.deploy_studio(os.environ["STUDIO_OWNER"], os.environ["STUDIO_NAME"])
+          owner, name = os.environ["STUDIO_OWNER"], os.environ["STUDIO_NAME"]
+          image, prev = os.environ["IMAGE"], os.environ["PREV_TAG"]
+          # 回滚同样必须改创空间 Dockerfile 的 FROM，否则只是把坏镜像重启一遍
+          d = pathlib.Path(tempfile.mkdtemp())
+          (d / "Dockerfile").write_text(
+              "# ModelScope 创空间入口：引用 GitHub Actions 构建的镜像，容器内不做任何构建。\n"
+              "# 本文件由 upstream-watch workflow 写入，请勿手工改版本号。\n"
+              f"FROM {image}:{prev}\n\nEXPOSE 7860\n"
+          )
+          api.upload_folder(repo_id=f"{owner}/{name}", repo_type="studio",
+                            folder_path=str(d), commit_message=f"rollback {prev}")
+          print("studio Dockerfile ->", f"FROM {image}:{prev}")
+          api.openapi.deploy_studio(owner, name)
           for _ in range(30):
               time.sleep(20)
               s = api.openapi.get_studio(os.environ["STUDIO_OWNER"], os.environ["STUDIO_NAME"])
