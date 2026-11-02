@@ -76,6 +76,15 @@ if [[ -n "${PGSTORE_DSN:-}" ]]; then
   export PGSTORE_LOCAL_PATH="${PGSTORE_LOCAL_PATH:-${DATA_ROOT}}"
 fi
 
+# PGStore 模式下 config.yaml 每次启动都由库重新引导生成，本身不需要持久化。
+# 放到容器本地盘可避免 OSSFS(FUSE) 上文件监听的事件误报——线上曾表现为
+# 「配置加载完成后 3 秒 CPA 以 exit 0 主动退出」的自重启死循环。
+if [[ "${PGSTORE_MODE}" == "1" ]]; then
+  CPA_LOCAL_CONFIG_DIR="/tmp/cpa-config"
+  mkdir -p "${CPA_LOCAL_CONFIG_DIR}"
+  CPA_CONFIG="${CPA_LOCAL_CONFIG_DIR}/config.yaml"
+fi
+
 require_secret CPA_MANAGEMENT_KEY
 require_secret OMCPA_MASTER_KEY
 
@@ -208,8 +217,35 @@ restore_omc_db
 # ---------- 启动 CPA ----------
 # 管理口令由 config.yaml 的 bcrypt secret-key 承担；此处显式置位以便
 # 远程管理在容器内按本地凭据放行，启动后随即从环境移除。
-export MANAGEMENT_PASSWORD="${CPA_MANAGEMENT_KEY}"
+#
+# 装甲式启动：CPA 若在就绪后自行退出（曾观测到 exit 0 = 进程主动结束，
+# 非 OOM、非信号），直接重启并重新判定，而不是让整个容器跟着退出。
 
+run_start_process() {
+  local name="$1" url="$2" attempts="$3" launcher="$4"
+  local attempt=0
+  while :; do
+    attempt=$((attempt + 1))
+    eval "${launcher}"
+    if wait_for_service "${name}" "${url}" "${RUN_PID}" "${attempts}"; then
+      printf '%s is healthy (launch attempt %d).\n' "${name}" "${attempt}"
+      return 0
+    fi
+    if [[ "${attempt}" -ge 5 ]]; then
+      printf '%s failed to stay healthy after %d attempts; giving up.\n' "${name}" "${attempt}" >&2
+      return 1
+    fi
+    printf 'restarting %s (attempt %d)...\n' "${name}" "$((attempt + 1))" >&2
+    sleep 3
+  done
+}
+
+launch_cpa() {
+  export MANAGEMENT_PASSWORD="${CPA_MANAGEMENT_KEY}"
+  /app/cli-proxy-api --config "${CPA_CONFIG}" &
+  RUN_PID=$!
+  unset MANAGEMENT_PASSWORD
+}
 cpa_pid=""
 omc_pid=""
 caddy_pid=""
@@ -229,10 +265,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-/app/cli-proxy-api --config "${CPA_CONFIG}" &
-cpa_pid=$!
-unset MANAGEMENT_PASSWORD
-wait_for_service "CLIProxyAPI" "${CPA_HEALTH}" "${cpa_pid}" 300
+run_start_process "CLIProxyAPI" "${CPA_HEALTH}" 300 launch_cpa
+cpa_pid="${RUN_PID}"
 
 # ---------- 启动 Oh My CPA ----------
 # 8080 在 ModelScope 创空间里被平台自带的 dashboard 占用（无论绑

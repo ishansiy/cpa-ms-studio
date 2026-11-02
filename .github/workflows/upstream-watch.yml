@@ -108,6 +108,10 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Deploy to ModelScope studio
+        id: deploy
+        # 失败不能让后续 smoke/rollback 被 GitHub Actions 自动跳过（历史 bug：
+        # deploy 失败后 smoke 与 rollback 均为 skipped，自动回滚从未生效）
+        continue-on-error: true
         if: steps.check.outputs.changed == 'true'
         run: |
           python3 -m pip install --quiet "modelscope>=1.39"
@@ -137,7 +141,7 @@ jobs:
           STUDIO_NAME: ${{ env.STUDIO_NAME }}
 
       - name: Smoke test
-        if: steps.check.outputs.changed == 'true'
+        if: steps.check.outputs.changed == 'true' && steps.deploy.outcome == 'success'
         id: smoke
         run: |
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
@@ -154,8 +158,10 @@ jobs:
         env:
           MGMT_KEY: ${{ secrets.CPA_MGMT_KEY }}
 
-      - name: Rollback to previous good tag on smoke failure
-        if: steps.check.outputs.changed == 'true' && steps.smoke.outcome == 'failure'
+      - name: Rollback to previous good tag on deploy/smoke failure
+        if: >-
+          steps.check.outputs.changed == 'true' &&
+          (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure')
         run: |
           echo "::warning::smoke failed, rolling back to previous known-good image"
           # 找上一个稳定 tag（排除本次刚打的）
