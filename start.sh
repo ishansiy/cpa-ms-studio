@@ -153,6 +153,34 @@ snapshot_loop() {
   done
 }
 
+# 进程意外退出时取证：退出码语义 + 资源快照（正常路径不打印）
+diagnose_process_exit() {
+  local name="$1" pid="$2" rc=0
+  echo "=== DIAG[${name}] process gone, pid=${pid} ===" >&2
+  wait "${pid}" 2>/dev/null
+  rc=$?
+  echo "DIAG[${name}]: wait status = ${rc}" >&2
+  case "${rc}" in
+    0)   echo "DIAG: 0   = clean self-exit (进程主动退出)" >&2 ;;
+    1)   echo "DIAG: 1   = general error" >&2 ;;
+    2)   echo "DIAG: 2   = fatal config/runtime error" >&2 ;;
+    134) echo "DIAG: 134 = SIGABRT (Go panic / abort)" >&2 ;;
+    137) echo "DIAG: 137 = SIGKILL (多数为 OOM killer)" >&2 ;;
+    139) echo "DIAG: 139 = SIGSEGV" >&2 ;;
+    143) echo "DIAG: 143 = SIGTERM (被外部终止)" >&2 ;;
+    127) echo "DIAG: 127 = 非本 shell 子进程或已回收" >&2 ;;
+    *)   echo "DIAG: ${rc} = 其它状态" >&2 ;;
+  esac
+  echo "--- DIAG ps ---" >&2
+  ps -eo pid,ppid,stat,rss,etime,comm 2>/dev/null | head -25 >&2 || true
+  echo "--- DIAG mem ---" >&2
+  head -4 /proc/meminfo >&2 2>/dev/null || true
+  echo "--- DIAG disk ---" >&2
+  df -h /mnt/workspace /app /tmp 2>/dev/null >&2 || true
+  echo "--- DIAG kernel oom ---" >&2
+  (dmesg 2>/dev/null | grep -iE 'oom|killed process|out of memory' | tail -10) >&2 || echo "dmesg unavailable" >&2
+}
+
 wait_for_service() {
   local name="$1" url="$2" pid="$3" attempts="$4"
   local _
@@ -161,8 +189,13 @@ wait_for_service() {
       return 0
     fi
     if ! kill -0 "${pid}" 2>/dev/null; then
-      printf '%s exited before becoming healthy.\n' "${name}" >&2
-      return 1
+      # 二次确认 2s：避免进程 exec 自身重启的瞬间空档被误判为死亡
+      sleep 2
+      if ! kill -0 "${pid}" 2>/dev/null; then
+        diagnose_process_exit "${name}" "${pid}" || true
+        printf '%s exited before becoming healthy.\n' "${name}" >&2
+        return 1
+      fi
     fi
     sleep 1
   done
