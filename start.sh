@@ -73,7 +73,13 @@ PGSTORE_MODE=0
 if [[ -n "${PGSTORE_DSN:-}" ]]; then
   PGSTORE_MODE=1
   # 本地 spool（库的镜像工作区）放持久盘，跨重启保留
-  export PGSTORE_LOCAL_PATH="${PGSTORE_LOCAL_PATH:-${DATA_ROOT}}"
+  # 线上取证：CPA 的 workspace（=PGSTORE_LOCAL_PATH/pgstore）承载 config.yaml 与
+  # 全部 auth JSON。PGStore 模式每次启动都会把这些文件重写一遍，而此前该目录位于
+  # OSSFS 持久盘上，FUSE 层的文件监听极易把"自己刚写的文件"误报成变更。
+  # 改为容器本地盘；数据源头仍是 PostgreSQL，容器重启会重新拉取，不丢状态。
+  PGSTORE_SPOOL_ROOT="${PGSTORE_SPOOL_ROOT:-/tmp/cpa-spool}"
+  export PGSTORE_LOCAL_PATH="${PGSTORE_LOCAL_PATH:-${PGSTORE_SPOOL_ROOT}}"
+  mkdir -p "${PGSTORE_LOCAL_PATH}/pgstore"
 fi
 
 # PGStore 模式下 config.yaml 每次启动都由库重新引导生成，本身不需要持久化。
@@ -195,14 +201,20 @@ diagnose_process_exit() {
     echo "(empty)" >&2
   fi
   echo "--- DIAG spool config 实况 ---" >&2
-  if [[ -s "${CPA_CONFIG}" ]]; then
-    echo "spool path: ${CPA_CONFIG} bytes=$(wc -c < "${CPA_CONFIG}")" >&2
-    echo "has_observability=$(grep -c '^observability:' "${CPA_CONFIG}" || true)" >&2
-    echo "has_debug_true=$(grep -cE '^\s+debug: true' "${CPA_CONFIG}" || true)" >&2
-    grep -E '^(port|auth-dir|usage-statistics-enabled):' "${CPA_CONFIG}" >&2 || true
-    sed -n '/^plugins:/,+2p' "${CPA_CONFIG}" >&2 || true
+  echo "PGSTORE_LOCAL_PATH=${PGSTORE_LOCAL_PATH:-<unset>}" >&2
+  if [[ -n "${PGSTORE_DSN:-}" ]]; then
+    echo "PGSTORE_DSN=${PGSTORE_DSN}" | sed -E 's#(://)[^:/@]+:[^@]*@#\1***:***@#' >&2
   else
-    echo "spool config missing: ${CPA_CONFIG}" >&2
+    echo "PGSTORE_DSN=<unset>" >&2
+  fi
+  local ws_cfg="${PGSTORE_LOCAL_PATH:-/mnt/workspace/cpa-stack}/pgstore/config.yaml"
+  echo "workspace config: ${ws_cfg} bytes=$(wc -c < "${ws_cfg}" 2>/dev/null || echo 0)" >&2
+  if [[ -s "${ws_cfg}" ]]; then
+    echo "has_observability=$(grep -c '^observability:' "${ws_cfg}" || true)" >&2
+    echo "has_debug_true=$(grep -cE '^[[:space:]]+debug: true' "${ws_cfg}" || true)" >&2
+    echo "has_config_version=$(grep -c '^config-version:' "${ws_cfg}" || true)" >&2
+    grep -E '^(host|port|auth-dir|usage-statistics-enabled):' "${ws_cfg}" >&2 || true
+    sed -n '/^plugins:/,+2p' "${ws_cfg}" >&2 || true
   fi
 }
 
